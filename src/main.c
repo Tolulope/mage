@@ -11,6 +11,20 @@
 #define COLOR_GREEN 0xFF00FF00
 #define COLOR_BLUE  0xFF0000FF
 
+typedef struct {
+	SDL_Window* win;
+	SDL_Surface* screen;
+	SDL_Surface* img;
+	SDL_Surface* overlay;
+	uint32_t color;
+	int tool;
+	int mouse_down;
+	int win_width;
+	int win_height;
+	int x;
+	int y;
+} mage_state;
+
 /* probably going to want to add stuff before exit later */
 void mage_exit(int code)
 {
@@ -44,29 +58,29 @@ SDL_Surface* mage_load_image(char* f)
 	return surface;
 }
 
-void mage_pencil(SDL_Surface* img, uint32_t color, int x, int y)
+void mage_pencil(mage_state* m, int x, int y)
 {
 	/* warning: endianness is ABGR */
-	uint32_t* pixels = img->pixels;
-	if (SDL_MUSTLOCK(img)) {
-		SDL_LockSurface(img);
+	uint32_t* pixels = m->img->pixels;
+	if (SDL_MUSTLOCK(m->img)) {
+		SDL_LockSurface(m->img);
 	}
 	/* adjust for status bar (hack!) */
 	y -= 16;
 
-	pixels[(y*img->w)+x] = color;
-	if (SDL_MUSTLOCK(img)) {
-		SDL_UnlockSurface(img);
+	pixels[(y*m->img->w)+x] = m->color;
+	if (SDL_MUSTLOCK(m->img)) {
+		SDL_UnlockSurface(m->img);
 	}
 }
 
-void mage_rect(SDL_Surface* img, uint32_t color, int x, int y, int w, int h)
+void mage_rect(mage_state* m, int x, int y, int w, int h)
 {
 	/* warning: endianness is ABGR */
-	uint32_t* pixels = img->pixels;
+	uint32_t* pixels = m->img->pixels;
 	SDL_Rect rect;
-	if (SDL_MUSTLOCK(img)) {
-		SDL_LockSurface(img);
+	if (SDL_MUSTLOCK(m->img)) {
+		SDL_LockSurface(m->img);
 	}
 	/* adjust for status bar (hack!) */
 	y -= 16;
@@ -75,95 +89,100 @@ void mage_rect(SDL_Surface* img, uint32_t color, int x, int y, int w, int h)
 	rect.y = y;
 	rect.w = w;
 	rect.h = h;
-	SDL_FillRect(img, &rect, color);
-	/*for (int i = x; i < x+w; ++i) {
-		for (int ii = y; ii < y+h; ++ii) {
-			pixels[(ii*img->w)+i] = color;
-		}
-	}*/
-	if (SDL_MUSTLOCK(img)) {
-		SDL_UnlockSurface(img);
+	SDL_FillRect(m->img, &rect, m->color);
+	if (SDL_MUSTLOCK(m->img)) {
+		SDL_UnlockSurface(m->img);
 	}
 }
 
-void mage_render
-(SDL_Window* win, SDL_Surface* screen, SDL_Surface* img, SDL_Surface* overlay, uint32_t color)
+void mage_render(mage_state* m)
 {
-	/* screen clear and status bar */
+	/* creen clear and status bar */
 	SDL_Rect rect;
-	SDL_FillRect(screen, NULL, COLOR_BLACK);
+	SDL_FillRect(m->screen, NULL, COLOR_BLACK);
 	rect.w = 16;
 	rect.h = 16;
 	rect.x = 0;
 	rect.y = 0;
-	SDL_FillRect(screen, &rect, color);
+	SDL_FillRect(m->screen, &rect, m->color);
 	rect.y = -16;
 
-	rect.w = img->w;
-	rect.h = img->h;
-	SDL_BlitSurface(img, &rect, screen, NULL);
-	rect.w = overlay->w;
-	rect.h = overlay->h;
-	SDL_BlitSurface(overlay, &rect, screen, NULL);
-	SDL_UpdateWindowSurface(win);
+	rect.w = m->img->w;
+	rect.h = m->img->h;
+	SDL_BlitSurface(m->img, &rect, m->screen, NULL);
+	rect.w = m->overlay->w;
+	rect.h = m->overlay->h;
+	SDL_BlitSurface(m->overlay, &rect, m->screen, NULL);
+	SDL_UpdateWindowSurface(m->win);
+}
+
+mage_state* mage_init(void)
+{
+	mage_state* m = malloc(sizeof(*m));
+	if (m == NULL) {
+		mage_error("Failed to initialize state!");
+	}
+
+	m->color = COLOR_BLACK;
+	m->tool = TOOL_PENCIL;
+	m->mouse_down = 0;
+	m->win_width = 640;
+	m->win_height = 480;
+	m->x = 0;
+	m->y = 0;
+
+	return m;
 }
 
 int main(int argc, char* argv[])
 {
-	SDL_Window* win;
-	SDL_Surface* screen;
-	SDL_Surface* img;
-	SDL_Surface* overlay;
-	uint32_t color = COLOR_BLACK;
-	int tool = TOOL_PENCIL;
-	int mouse_down = 0;
-	int win_width = 640;
-	int win_height = 480;
-	int x = 0;
-	int y = 0;
+	mage_state* m = mage_init();
 
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 		mage_error("Failed to initialize SDL!");
 	}
 
-	win = SDL_CreateWindow("mage", 0, 0, win_width, win_height, SDL_WINDOW_SHOWN);
-	if (win == NULL) {
+	m->win = SDL_CreateWindow("mage", 0, 0, m->win_width, m->win_height, SDL_WINDOW_SHOWN);
+	if (m->win == NULL) {
 		mage_error("Failed to initialize SDL window!");
 	}
 
-	screen = SDL_GetWindowSurface(win);
+	m->screen = SDL_GetWindowSurface(m->win);
 
 	if (!(IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG)) {
 		mage_error("Failed to initialize SDL_image!");
 	}
 
 	if (argc > 1) {
-		img = mage_load_image(argv[1]);
+		m->img = mage_load_image(argv[1]);
+		if (m->img == NULL) {
+			mage_error("Failed to initialize image surface!");
+		}
 	} else {
 		/* fall back to a blank canvas */
-		img = SDL_CreateRGBSurfaceWithFormat(NULL,
-											 win_width,
-											 win_height,
+		m->img = SDL_CreateRGBSurfaceWithFormat(NULL,
+											 m->win_width,
+											 m->win_height,
 											 8,
 											 SDL_PIXELFORMAT_BGRA32);
-		SDL_FillRect(img, NULL, COLOR_WHITE);
-	}
-	if (img == NULL) {
-		mage_error("Failed to initialize image surface!");
+		SDL_FillRect(m->img, NULL, COLOR_WHITE);
+		if (m->img == NULL) {
+			mage_error("Failed to initialize image surface!");
+		}
 	}
 
-	overlay = SDL_CreateRGBSurfaceWithFormat(NULL,
-											 img->w,
-											 img->h,
+	m->overlay = SDL_CreateRGBSurfaceWithFormat(NULL,
+											 m->img->w,
+											 m->img->h,
 											 8,
 											 SDL_PIXELFORMAT_BGRA32);
-	if (overlay == NULL) {
-		mage_error("Failed to initialize overlay surface!");
+	if (m->overlay == NULL) {
+		mage_error("Failed to initialize m->overlay surface!");
 	}
 
 
-	/* so we don't start with a black screen */
-	mage_render(win, screen, img, overlay, color);
+	/* so we don't start with a black m->screen */
+	mage_render(m);
 	while (1) {
 		SDL_Event e;
 		int should_draw = 0;
@@ -178,83 +197,83 @@ int main(int argc, char* argv[])
 					mage_exit(0);
 				}
 				if (e.key.keysym.sym == SDLK_b) {
-					tool = TOOL_PENCIL;
+					m->tool = TOOL_PENCIL;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_r) {
-					tool = TOOL_RECT;
+					m->tool = TOOL_RECT;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_1) {
-					color = COLOR_BLACK;
+					m->color = COLOR_BLACK;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_2) {
-					color = COLOR_WHITE;
+					m->color = COLOR_WHITE;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_3) {
-					color = COLOR_RED;
+					m->color = COLOR_RED;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_4) {
-					color = COLOR_GREEN;
+					m->color = COLOR_GREEN;
 					should_draw = 1;
 				}
 				if (e.key.keysym.sym == SDLK_5) {
-					color = COLOR_BLUE;
+					m->color = COLOR_BLUE;
 					should_draw = 1;
 				}
 				break;
 			case SDL_MOUSEBUTTONDOWN:
 				if (e.button.button == SDL_BUTTON_LEFT) {
-					switch (tool) {
+					switch (m->tool) {
 					case TOOL_PENCIL:
-						mage_pencil(img, color, e.button.x, e.button.y);
+						mage_pencil(m, e.button.x, e.button.y);
 						break;
 					case TOOL_RECT:
-						x = e.button.x;
-						y = e.button.y;
+						m->x = e.button.x;
+						m->y = e.button.y;
 						break;
 					}
-					mouse_down = 1;
+					m->mouse_down = 1;
 					should_draw = 1;
 				}
 				break;
 			case SDL_MOUSEBUTTONUP:
-				if (mouse_down && e.button.button == SDL_BUTTON_LEFT) {
-					switch (tool) {
+				if (m->mouse_down && e.button.button == SDL_BUTTON_LEFT) {
+					switch (m->tool) {
 					case TOOL_RECT:
-						mage_rect(img, color,
-								  x<e.button.x?x:e.button.x,
-								  y<e.button.y?y:e.button.y,
-								  x<e.button.x?e.button.x-x:x-e.button.x,
-								  y<e.button.y?e.button.y-y:y-e.button.y);
+						mage_rect(m,
+								  m->x<e.button.x?m->x:e.button.x,
+								  m->y<e.button.y?m->y:e.button.y,
+								  m->x<e.button.x?e.button.x-m->x:m->x-e.button.x,
+								  m->y<e.button.y?e.button.y-m->y:m->y-e.button.y);
 						break;
 					}
 					should_draw = 1;
 				}
-				mouse_down = 0;
+				m->mouse_down = 0;
 				should_draw = 1;
 				break;
 			case SDL_MOUSEMOTION:
-				if (mouse_down && e.button.button == SDL_BUTTON_LEFT) {
-					switch (tool) {
+				if (m->mouse_down && e.button.button == SDL_BUTTON_LEFT) {
+					switch (m->tool) {
 					case TOOL_PENCIL:
-						mage_pencil(img, color, e.button.x, e.button.y);
+						mage_pencil(m, e.button.x, e.button.y);
 						break;
 					case TOOL_RECT: {
 						/* adjust for status bar (hack!) */
 						int motion_x = e.motion.x;
 						int motion_y = e.motion.y-16;
-						int xx = x;
-						int yy = y-16;
+						int xx = m->x;
+						int yy = m->y-16;
 						SDL_Rect rect;
 						rect.x = xx<motion_x?xx:motion_x;
 						rect.y = yy<motion_y?yy:motion_y;
 						rect.w = xx<motion_x?motion_x-xx:xx-motion_x;
 						rect.h = yy<motion_y?motion_y-yy:yy-motion_y;
-						SDL_FillRect(overlay, &rect, color);
+						SDL_FillRect(m->overlay, &rect, m->color);
 						break;
 					}
 					}
@@ -266,8 +285,8 @@ int main(int argc, char* argv[])
 			}
 		}
 		if (should_draw) {
-			mage_render(win, screen, img, overlay, color);
-			SDL_FillRect(overlay, NULL, 0x00000000);
+			mage_render(m);
+			SDL_FillRect(m->overlay, NULL, 0x00000000);
 		}
 	}
 	return 0;
